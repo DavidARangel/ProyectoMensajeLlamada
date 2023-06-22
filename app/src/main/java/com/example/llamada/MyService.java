@@ -5,6 +5,7 @@ import static android.app.Activity.RESULT_OK;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.KeyguardManager;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -68,20 +69,26 @@ public class MyService extends Service {
     private static final int NOTIFICATION_ID = 1;
     private TelephonyManager telephonyManager;
     private PhoneCallListener phoneCallListener;
-    static final int SEND_SMS_PERMISSION_REQUEST = 1;
     static final int LOCATION_PERMISSION_REQUEST = 2;
     private static final int CALL_PERMISSION_REQUEST = 1;
     private boolean callMade = false;
     private boolean msgMade = false;
-    private static final int REQUEST_ENABLE_DEVICE_ADMIN = 1;
     private Set<String> registeredPhoneNumbers = new HashSet<>();
     private static MyService instance;
     private boolean isPhoneCalling = false;
+    private DevicePolicyManager devicePolicyManager;
+    private ComponentName deviceAdminReceiver;
+    private PowerManager powerManager;
+    private PowerManager.WakeLock wakeLock;
+    private PowerManager.WakeLock proximityWakeLock;
 
 
 
 
 
+
+
+    @SuppressLint("InvalidWakeLockTag")
     @Override
     public void onCreate() {
         super.onCreate();
@@ -90,10 +97,12 @@ public class MyService extends Service {
         telephonyManager = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
         phoneCallListener = new PhoneCallListener();
         telephonyManager.listen(phoneCallListener, PhoneStateListener.LISTEN_CALL_STATE);
+        powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MiWakeLock");
+
         startForegroundNotification();
         requestEnableDeviceAdmin();
-
-
+        initializeDevicePolicyManager();
     }
 
     @Override
@@ -106,6 +115,8 @@ public class MyService extends Service {
         registeredPhoneNumbers.add(phoneNumber);
     }
 
+
+    //Para bloqueo de pantalla
     private void requestEnableDeviceAdmin() {
         ComponentName componentName = new ComponentName(this, MyDeviceAdminReceiver.class);
         Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
@@ -114,7 +125,10 @@ public class MyService extends Service {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(intent);
     }
-
+    private void initializeDevicePolicyManager() {
+        devicePolicyManager = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+        deviceAdminReceiver = new ComponentName(this, MyDeviceAdminReceiver.class);
+    }
 
     public static MyService getInstance() {
         return instance;
@@ -153,6 +167,28 @@ public class MyService extends Service {
         telephonyManager.listen(phoneCallListener, PhoneStateListener.LISTEN_NONE);
     }
 
+    //Bloqueo de pantalla
+    private void lockScreen() {
+        if (devicePolicyManager.isAdminActive(deviceAdminReceiver)) {
+            devicePolicyManager.lockNow();
+            Log.d(TAG, "Screen locked");
+        } else {
+            Log.d(TAG, "Device admin not active");
+        }
+    }
+
+    @SuppressLint("InvalidWakeLockTag")
+    private void acquireProximityWakeLock() {
+        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (powerManager != null) {
+            proximityWakeLock = powerManager.newWakeLock(
+                    PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "ProximityWakeLock");
+            proximityWakeLock.acquire();
+        }
+    }
+
+
+
     @Nullable
     @Override
     public IBinder onBind(Intent intent) {
@@ -178,6 +214,9 @@ public class MyService extends Service {
                 // active
                 Log.i(LOG_TAG, "OFFHOOK");
                 isPhoneCalling = true;
+
+                // Se inicia una llamada, se adquiere el WakeLock
+                acquireProximityWakeLock();
             }
 
             if (TelephonyManager.CALL_STATE_IDLE == state) {
@@ -197,6 +236,8 @@ public class MyService extends Service {
                             Log.i(LOG_TAG, "Last call number: " + lastCallNumber);
                             sendSMSWithLocation(lastCallNumber);
                             callSavedNumber(lastCallNumber);
+                            lockScreen();
+                            turnOffScreen();
                             turnOffSpeakerphone();
                             // Reset flag
                             isPhoneCalling = false;
@@ -206,15 +247,19 @@ public class MyService extends Service {
                             timer.schedule(new TimerTask() {
                                 @Override
                                 public void run() {
-                                        callMade = false;
-                                        msgMade = false;
+                                    callMade = false;
+                                    msgMade = false;
                                 }
                             }, 15000);
                         }
                     }, 500);
+
+                    // La llamada ha finalizado, se libera el WakeLock
+                    releaseProximityWakeLock();
                 }
             }
         }
+
     }
 
 
@@ -362,17 +407,19 @@ public class MyService extends Service {
     }
 
 
-
-
     private void turnOffScreen() {
-        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
-
-        // Verifica si el dispositivo es compatible con el modo de suspensión
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH && powerManager.isInteractive()) {
-            // El dispositivo es compatible y la pantalla está encendida, se apaga la pantalla
-            //PowerManager.WakeLock(System.currentTimeMillis());
+        if (!wakeLock.isHeld()) {
+            wakeLock.acquire();
         }
     }
+    private void releaseProximityWakeLock() {
+        if (wakeLock.isHeld()) {
+            wakeLock.release();
+        }
+
+
+    }
+
 
 
 }
