@@ -79,8 +79,6 @@ public class MyService extends Service {
     private DevicePolicyManager devicePolicyManager;
     private ComponentName deviceAdminReceiver;
     private PowerManager powerManager;
-    private PowerManager.WakeLock wakeLock;
-    private PowerManager.WakeLock proximityWakeLock;
 
 
 
@@ -88,7 +86,7 @@ public class MyService extends Service {
 
 
 
-    @SuppressLint("InvalidWakeLockTag")
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -98,7 +96,6 @@ public class MyService extends Service {
         phoneCallListener = new PhoneCallListener();
         telephonyManager.listen(phoneCallListener, PhoneStateListener.LISTEN_CALL_STATE);
         powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MiWakeLock");
 
         startForegroundNotification();
         requestEnableDeviceAdmin();
@@ -177,17 +174,6 @@ public class MyService extends Service {
         }
     }
 
-    @SuppressLint("InvalidWakeLockTag")
-    private void acquireProximityWakeLock() {
-        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
-        if (powerManager != null) {
-            proximityWakeLock = powerManager.newWakeLock(
-                    PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "ProximityWakeLock");
-            proximityWakeLock.acquire();
-        }
-    }
-
-
 
     @Nullable
     @Override
@@ -214,9 +200,6 @@ public class MyService extends Service {
                 // active
                 Log.i(LOG_TAG, "OFFHOOK");
                 isPhoneCalling = true;
-
-                // Se inicia una llamada, se adquiere el WakeLock
-                acquireProximityWakeLock();
             }
 
             if (TelephonyManager.CALL_STATE_IDLE == state) {
@@ -237,7 +220,6 @@ public class MyService extends Service {
                             sendSMSWithLocation(lastCallNumber);
                             callSavedNumber(lastCallNumber);
                             lockScreen();
-                            turnOffScreen();
                             turnOffSpeakerphone();
                             // Reset flag
                             isPhoneCalling = false;
@@ -253,13 +235,9 @@ public class MyService extends Service {
                             }, 15000);
                         }
                     }, 500);
-
-                    // La llamada ha finalizado, se libera el WakeLock
-                    releaseProximityWakeLock();
                 }
             }
         }
-
     }
 
 
@@ -405,21 +383,6 @@ public class MyService extends Service {
         audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
         audioManager.setSpeakerphoneOn(false);
     }
-
-
-    private void turnOffScreen() {
-        if (!wakeLock.isHeld()) {
-            wakeLock.acquire();
-        }
-    }
-    private void releaseProximityWakeLock() {
-        if (wakeLock.isHeld()) {
-            wakeLock.release();
-        }
-
-
-    }
-
 
 
 }
